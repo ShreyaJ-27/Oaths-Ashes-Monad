@@ -185,6 +185,12 @@ export class GameContract {
     return this.contract.usedNonce(matchId, houseId);
   }
 
+  async getPlayerMatch(playerAddress: string): Promise<bigint> {
+    if (!this.contract) throw new Error("Contract not initialized");
+    const matchId = await this.contract.playerToMatch(playerAddress);
+    return BigInt(matchId);
+  }
+
   async getRecentEvents(matchId: bigint, fromBlockDepth = 1000) {
     if (!this.contract || !this.provider) throw new Error("Contract not initialized");
 

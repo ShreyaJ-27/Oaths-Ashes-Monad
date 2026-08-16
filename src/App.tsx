@@ -1,16 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BrowserProvider } from "ethers";
-import { gameContract } from "./contract";
-import {
-  applyLocalAction,
-  clearLocalGame,
-  createLocalGame,
-  loadLocalGame,
-  LocalGameState,
-  resolveLocalRound,
-  saveLocalGame,
-  validateLocalAction,
-} from "./localGame";
+import { useGame } from "./game/GameContext";
 import {
   Screen,
   asNumber,
@@ -22,7 +11,7 @@ import {
   territoryById,
   territoryMeta,
 } from "./gameMeta";
-import { GAME_CONFIG, MONAD_CONFIG } from "./types";
+import { GAME_CONFIG } from "./types";
 
 const actionOptions = [
   { id: GAME_CONFIG.actions.Attack, name: "Attack", icon: "/assets/icons/attack.png", targetType: GAME_CONFIG.targetTypes.Territory },
@@ -45,40 +34,35 @@ const navScreens: Array<{ id: Screen; label: string }> = [
   { id: "profile", label: "Profile" },
 ];
 
-function friendlyError(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err || "Something went wrong.");
-  if (/metamask|ethereum/i.test(message)) return "Wallet not connected";
-  if (/network|chain/i.test(message)) return "Wrong network";
-  if (/unavailable|rpc|fetch|network error/i.test(message)) return "RPC unavailable";
-  if (/user rejected|denied/i.test(message)) return "Signature rejected";
-  if (/occupied|already/i.test(message)) return "House already occupied";
-  if (/expired|deadline/i.test(message)) return "Round expired";
-  if (/finished|ended/i.test(message)) return "Match finished";
-  if (/invalid target/i.test(message)) return "Invalid target";
-  if (/action unavailable|orders already|not enough|cannot|requires|no bonded/i.test(message)) {
-    return message;
-  }
-  return message.length > 120 ? "Action unavailable" : message;
-}
-
 export function App() {
-  const [connected, setConnected] = useState(false);
-  const [address, setAddress] = useState("");
-  const [chainId, setChainId] = useState(0);
+  const {
+    mode,
+    gameState,
+    connected,
+    address,
+    chainId,
+    txPhase,
+    loading,
+    settling,
+    status,
+    error,
+    matchId,
+    setMode,
+    connect,
+    startNewGame,
+    joinHouse,
+    submitAction,
+    advanceRound,
+  } = useGame();
+
   const [selectedHouse, setSelectedHouse] = useState(5);
   const [activeScreen, setActiveScreen] = useState<Screen>("menu");
-  const [gameState, setGameState] = useState<LocalGameState | null>(null);
   const [selectedTerritoryId, setSelectedTerritoryId] = useState(6);
   const [selectedDragonId, setSelectedDragonId] = useState(1);
   const [selectedAction, setSelectedAction] = useState<number>(GAME_CONFIG.actions.Tax);
   const [targetType, setTargetType] = useState<number>(GAME_CONFIG.targetTypes.Territory);
   const [targetId, setTargetId] = useState<number>(6);
   const [diplomacyTarget, setDiplomacyTarget] = useState(2);
-  const [roundSecondsLeft, setRoundSecondsLeft] = useState(0);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [settling, setSettling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const activeHouse = useMemo(
@@ -95,170 +79,71 @@ export function App() {
     null;
   const throneTerritory = gameState?.territories.find((territory) => territory.isThrone);
   const playerDragon = gameState?.dragons.find(
-    (dragon) => dragon.ownerHouseId === gameState.playerHouseId && dragon.alive
+    (dragon) => dragon.ownerHouseId === gameState?.playerHouseId && dragon.alive
   );
   const territoryCount =
     gameState?.territories.filter((t) => t.ownerHouseId === gameState.playerHouseId).length ?? 0;
-  const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Local campaign";
+  const [roundSecondsLeft, setRoundSecondsLeft] = useState(0);
   const diplomacyHouse = houseById(diplomacyTarget);
 
-  useEffect(() => {
-    const saved = loadLocalGame();
-    if (saved) {
-      setGameState(saved);
-      setSelectedHouse(saved.playerHouseId);
-      setSelectedTerritoryId(
-        saved.houses.find((h) => h.houseId === saved.playerHouseId)?.territoryId || 6
-      );
-      const owned = saved.dragons.find((d) => d.ownerHouseId === saved.playerHouseId);
-      setSelectedDragonId(owned?.dragonId || 1);
-      setActiveScreen("war");
-      setStatus("Campaign restored.");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (gameState) saveLocalGame(gameState);
-  }, [gameState]);
-
-  useEffect(() => {
-    if (!status && !error) return;
-    const timer = window.setTimeout(() => {
-      setStatus("");
-      setError("");
-    }, 3500);
-    return () => window.clearTimeout(timer);
-  }, [status, error]);
+  const shortAddress = address
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : mode === "LOCAL"
+      ? "Local dev"
+      : "Not connected";
 
   useEffect(() => {
     if (!gameState || gameState.match.status !== 1) return;
     const tick = () => {
       const seconds = Math.max(0, gameState.match.roundDeadline - Math.floor(Date.now() / 1000));
       setRoundSecondsLeft(seconds);
-      if (seconds === 0 && !settling) {
-        void advanceRound();
-      }
     };
     tick();
     const interval = window.setInterval(tick, 1000);
     return () => window.clearInterval(interval);
-  }, [gameState?.match.roundDeadline, gameState?.match.round, settling]);
+  }, [gameState?.match.roundDeadline, gameState?.match.round]);
 
-  const persistAndSet = (next: LocalGameState) => {
-    setGameState(next);
-    saveLocalGame(next);
-  };
-
-  const startNewGame = () => {
-    clearLocalGame();
-    setGameState(null);
-    setError("");
-    setStatus("Choose your house to begin the campaign.");
-    setActiveScreen("houses");
-    setSettingsOpen(false);
-  };
-
-  const joinMatchScreen = () => {
-    setError("");
-    setStatus("Select a house banner to enter the war.");
-    setActiveScreen("houses");
-  };
-
-  const enterWarRoom = () => {
-    const next = createLocalGame(selectedHouse);
-    persistAndSet(next);
-    setSelectedTerritoryId(selectedHouse);
-    setTargetId(selectedHouse);
-    const owned = next.dragons.find((d) => d.ownerHouseId === selectedHouse);
-    setSelectedDragonId(owned?.dragonId || 1);
-    setActiveScreen("war");
-    setStatus(`${houseById(selectedHouse).name} enters the War Room. No wallet required.`);
-  };
-
-  const connectWallet = async () => {
+  const handleNewGame = async () => {
     try {
-      setLoading(true);
-      setError("");
-      const { ethereum } = window as any;
-      if (!ethereum) throw new Error("Wallet not connected");
-
-      const accounts = await ethereum.request({ method: "eth_requestAccounts" });
-      let chainIdHex = await ethereum.request({ method: "eth_chainId" });
-      let nextChainId = parseInt(chainIdHex, 16);
-
-      if (nextChainId !== MONAD_CONFIG.chainId) {
-        try {
-          await ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: `0x${MONAD_CONFIG.chainId.toString(16)}` }],
-          });
-        } catch (switchError: any) {
-          if (switchError.code !== 4902) throw switchError;
-          await ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: `0x${MONAD_CONFIG.chainId.toString(16)}`,
-                chainName: MONAD_CONFIG.chainName,
-                rpcUrls: [MONAD_CONFIG.rpcUrl],
-                nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
-              },
-            ],
-          });
-        }
-        chainIdHex = await ethereum.request({ method: "eth_chainId" });
-        nextChainId = parseInt(chainIdHex, 16);
-      }
-
-      if (nextChainId !== MONAD_CONFIG.chainId) throw new Error("Wrong network");
-
-      const nextProvider = new BrowserProvider(ethereum);
-      const nextSigner = await nextProvider.getSigner();
-      await gameContract.initialize(nextProvider);
-      gameContract.setSigner(nextSigner);
-
-      setAddress(accounts[0]);
-      setChainId(nextChainId);
-      setConnected(true);
-      setStatus("Wallet bound for optional on-chain settlement.");
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setLoading(false);
+      if (mode === "MONAD" && !connected) await connect();
+      await startNewGame();
+      setActiveScreen("houses");
+    } catch {
+      /* surfaced via context */
     }
   };
 
-  const createOnChainMatch = async () => {
-    if (!connected) {
-      setError("Wallet not connected");
-      return;
-    }
+  const handleJoinMatch = async () => {
     try {
-      setLoading(true);
-      setError("");
-      const matchId = await gameContract.createMatch();
-      setStatus(`On-chain match ${matchId.toString()} created. Local campaign remains playable.`);
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setLoading(false);
+      if (mode === "MONAD" && !connected) await connect();
+      setActiveScreen("houses");
+    } catch {
+      /* surfaced via context */
     }
   };
 
-  const issueAction = (action = selectedAction, nextTargetType = targetType, nextTargetId = targetId) => {
+  const enterWarRoom = async () => {
+    try {
+      await joinHouse(selectedHouse);
+      setSelectedTerritoryId(selectedHouse);
+      setTargetId(selectedHouse);
+      setActiveScreen("war");
+    } catch {
+      /* surfaced via context */
+    }
+  };
+
+  const issueAction = async (
+    action = selectedAction,
+    nextTargetType = targetType,
+    nextTargetId = targetId
+  ) => {
     if (!gameState) {
       setActiveScreen("houses");
-      setStatus("Choose a house before issuing orders.");
       return;
     }
     try {
-      setError("");
-      const validation = validateLocalAction(gameState, action, nextTargetType, nextTargetId);
-      if (validation) throw new Error(validation);
-      const next = applyLocalAction(gameState, action, nextTargetType, nextTargetId);
-      persistAndSet(next);
-      const label = actionOptions.find((item) => item.id === action)?.name || "Order";
-      setStatus(`${label} sealed for ${currentHouse.name}.`);
+      await submitAction({ action, targetType: nextTargetType, targetId: nextTargetId });
       if (action === GAME_CONFIG.actions.Attack || action === GAME_CONFIG.actions.Dragonstrike) {
         setActiveScreen("battle");
       } else if (action === GAME_CONFIG.actions.Diplomacy) {
@@ -266,42 +151,19 @@ export function App() {
       } else {
         setActiveScreen("war");
       }
-    } catch (err) {
-      setError(friendlyError(err));
-    }
-  };
-
-  const advanceRound = async () => {
-    if (!gameState || settling || gameState.match.status !== 1) return;
-    setSettling(true);
-    try {
-      const next = resolveLocalRound(gameState);
-      persistAndSet(next);
-      if (next.match.status === 2) {
-        setStatus(
-          next.match.winnerHouseId === next.playerHouseId
-            ? "Victory. Your house claims the realm."
-            : `${houseById(next.match.winnerHouseId).name} claims the realm.`
-        );
-        setActiveScreen("throne");
-      } else {
-        setStatus(`Round ${next.match.round} begins.`);
-      }
-    } finally {
-      setSettling(false);
+    } catch {
+      /* surfaced via context */
     }
   };
 
   const exitToMenu = () => {
     setActiveScreen("menu");
     setSettingsOpen(false);
-    setStatus("Returned to the main hall.");
   };
 
   const requireGame = (screen: Screen) => {
     if (!gameState && screen !== "menu" && screen !== "houses" && screen !== "settings") {
       setActiveScreen("houses");
-      setStatus("Begin a campaign to open that hall.");
       return;
     }
     setActiveScreen(screen);
@@ -357,13 +219,23 @@ export function App() {
                 <h1>Oaths & Ashes</h1>
                 <p className="menu-tag">Six houses. One throne. No mercy between rounds.</p>
                 <div className="menu-buttons">
-                  <button onClick={startNewGame}>New Game</button>
-                  <button onClick={joinMatchScreen}>Join Match</button>
+                  <button onClick={() => void handleNewGame()} disabled={loading}>
+                    New Game
+                  </button>
+                  <button onClick={() => void handleJoinMatch()} disabled={loading}>
+                    Join Match
+                  </button>
                   <button onClick={() => requireGame("chronicle")}>Chronicle</button>
                   <button onClick={() => setSettingsOpen(true)}>Settings</button>
                   <button onClick={exitToMenu}>Exit</button>
                 </div>
-                <div className="hud-note">Campaign mode — wallet optional for settlement only</div>
+                <div className="hud-note">
+                  {mode === "MONAD"
+                    ? connected
+                      ? `Monad Testnet · Match ${matchId?.toString() || "pending"}`
+                      : "Connect wallet to play on Monad"
+                    : "Local development mode"}
+                </div>
               </div>
             </div>
           </section>
@@ -403,7 +275,7 @@ export function App() {
               </div>
             </div>
             <div className="screen-actions">
-              <button className="wide-action" onClick={enterWarRoom}>
+              <button className="wide-action" onClick={() => void enterWarRoom()} disabled={loading}>
                 Confirm / Enter War Room
               </button>
               <button className="ghost" onClick={() => setActiveScreen("menu")}>
@@ -507,12 +379,14 @@ export function App() {
                   ))}
                 </optgroup>
               </select>
-              <button className="seal-action" onClick={() => issueAction()} disabled={loading || gameState.pendingAction}>
-                {gameState.pendingAction ? "Orders Sealed" : "Issue Order"}
+              <button className="seal-action" onClick={() => void issueAction()} disabled={loading || gameState.pendingAction || txPhase === "signing" || txPhase === "submitting"}>
+                {gameState.pendingAction ? "Orders Sealed" : txPhase === "signing" ? "Signing..." : txPhase === "submitting" ? "Submitting..." : "Issue Order"}
               </button>
-              <button className="seal-action" onClick={() => void advanceRound()} disabled={settling}>
-                Advance Round
-              </button>
+              {mode === "LOCAL" && (
+                <button className="seal-action" onClick={() => void advanceRound()} disabled={settling}>
+                  Advance Round
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -768,10 +642,7 @@ export function App() {
                 const enemyLand = gameState.territories.find(
                   (t) => t.ownerHouseId === diplomacyTarget
                 );
-                if (!enemyLand) {
-                  setError("Invalid target");
-                  return;
-                }
+                if (!enemyLand) return;
                 issueAction(
                   GAME_CONFIG.actions.Sabotage,
                   GAME_CONFIG.targetTypes.Territory,
@@ -925,19 +796,22 @@ export function App() {
           <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
             <div className="modal" onClick={(event) => event.stopPropagation()}>
               <h3>Settings</h3>
-              <p>Gameplay runs locally. Wallet is only for optional on-chain match creation and settlement.</p>
+              <p>
+                Mode: <b>{mode}</b> — production uses Monad contract as authority.
+              </p>
               <p>Network: {connected ? `Monad ${chainId}` : "Not connected"}</p>
               <p>Identity: {shortAddress}</p>
+              <p>Tx: {txPhase}</p>
               <div className="split-buttons">
-                <button onClick={() => void connectWallet()} disabled={loading}>
+                <button onClick={() => void connect()} disabled={loading}>
                   {connected ? "Reconnect Wallet" : "Connect Wallet"}
                 </button>
-                <button onClick={() => void createOnChainMatch()} disabled={!connected || loading}>
-                  Create On-Chain Match
+                <button onClick={() => setMode(mode === "MONAD" ? "LOCAL" : "MONAD")}>
+                  Switch to {mode === "MONAD" ? "LOCAL" : "MONAD"}
                 </button>
               </div>
               <div className="split-buttons">
-                <button onClick={startNewGame}>Reset Campaign</button>
+                <button onClick={() => void handleNewGame()}>New Match</button>
                 <button className="danger" onClick={() => setSettingsOpen(false)}>Close</button>
               </div>
               <a className="gallery-link" href="/reference-gallery">Open Reference Gallery</a>

@@ -7,10 +7,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "integration-test": "vitest run --config vitest.integration.config.ts"
+    "integration-test": "vitest run --config vitest.integration.config.ts",
+    "server": "node server/index.mjs"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "ethers": "^6.11.0",
+    "express": "^4.19.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
