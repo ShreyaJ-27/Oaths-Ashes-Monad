@@ -11,7 +11,8 @@ export type Screen =
   | "inventory"
   | "profile"
   | "settings"
-  | "monad";
+  | "monad"
+  | "reference-gallery";
 
 export type HouseMeta = {
   id: number;
@@ -44,6 +45,15 @@ export type DragonMeta = {
   name: string;
   type: string;
   art: string;
+};
+
+export type RealmAnnal = {
+  id: string;
+  era: string;
+  houseId?: number;
+  icon?: string;
+  title: string;
+  text: string;
 };
 
 export const houseMeta: HouseMeta[] = [
@@ -158,6 +168,91 @@ export const dragonMeta: DragonMeta[] = [
   { id: 1, name: "Ashwing", type: "Bonded Drake", art: "/assets/dragons/ashwing.png" },
   { id: 2, name: "Cinderclaw", type: "Cinder Drake", art: "/assets/dragons/cinderclaw.png" },
   { id: 3, name: "Nacreback", type: "Neutral Drake", art: "/assets/dragons/nacreback.png" },
+];
+
+export const realmAnnals: RealmAnnal[] = [
+  {
+    id: "annal-1",
+    era: "Age of Cinders",
+    houseId: 6,
+    icon: "/assets/sigils/dusk.png",
+    title: "The First Covenant at Fallen Gate",
+    text: "Before the great fracturing, the six houses met upon the ruins of the Crown of Ashes. An ancient pact was carved in obsidian: no house shall rule forever without continuous conquest or unbroken throne sovereignty.",
+  },
+  {
+    id: "annal-2",
+    era: "Era of Dragons",
+    houseId: 5,
+    icon: "/assets/sigils/sky.png",
+    title: "The Skyglass Binding of Ashwing",
+    text: "Kael Skyglass climbed the frozen spires of Thornwatch and bonded with the great drake Ashwing. The high passes became impassable to ground armies without paying homage or suffering dragonfire.",
+  },
+  {
+    id: "annal-3",
+    era: "The Iron Wars",
+    houseId: 2,
+    icon: "/assets/sigils/iron.png",
+    title: "The Redoubts of Briarfen",
+    text: "Maeric Thorn fortified the iron hills with black iron bastions. Under relentless coastal sieges, the defenders stood unbreakable, proving that thorns shatter softer crowns.",
+  },
+  {
+    id: "annal-4",
+    era: "The Marsh Accord",
+    houseId: 3,
+    icon: "/assets/sigils/gloam.png",
+    title: "The Whispering Fog of Glasswater",
+    text: "Vey Mossveil wove the marsh mists into an invisible web of espionage. An entire invasion army dissolved into the swamps without a single sword clash, establishing the lethal art of sabotage.",
+  },
+  {
+    id: "annal-5",
+    era: "The Golden Era",
+    houseId: 4,
+    icon: "/assets/sigils/ember.png",
+    title: "The Minting of Emberkeep",
+    text: "Aurel Coinbrand forged the southern trade routes and established the taxation laws that rule the realm. Through economic dominance, Ember Crown turned harvested wealth into mercenary legions.",
+  },
+  {
+    id: "annal-6",
+    era: "The Coastal Pyres",
+    houseId: 1,
+    icon: "/assets/sigils/ashen.png",
+    title: "The Salt & Cinder Vow",
+    text: "Sable Pyre bound the coastal pyromancers to the volcanic shores of Ashenmere, perfecting sudden adjacent assaults where fire remembers every broken oath.",
+  },
+  {
+    id: "annal-7",
+    era: "The Great Succession",
+    houseId: 6,
+    icon: "/assets/sigils/dusk.png",
+    title: "The Unsealing of the Crown",
+    text: "Rook Vesper unsealed the ancient throne road. The Crown of Ashes fell vacant, summoning the six dynasties to wage a war of simultaneous intents, dragon strikes, and alliances.",
+  },
+  {
+    id: "annal-8",
+    era: "Decree of Monad",
+    icon: "/assets/icons/reputation.png",
+    title: "The Immutable Ledger of Oaths",
+    text: "Every alliance sealed and oath broken is forever inscribed into the blockchain chronicle. Treachery carries irreparable loss of realm standing and triggers vengeance declarations.",
+  },
+];
+
+export const realmRules = [
+  {
+    title: "Simultaneous Turns & Intent Signing",
+    desc: "All lords seal their strategic intents (Attack, Fortify, Dragon Strike, Diplomacy, Sabotage, Tax) in secret using EIP-712 cryptographic signatures with zero gas fees.",
+  },
+  {
+    title: "The Law of Oaths & Betrayal",
+    desc: "Alliances offer joint protection and mutual strength, but treacherous lords may break oaths at will. Betrayal causes permanent reputation penalties recorded on Monad.",
+  },
+  {
+    title: "Dragon Domination",
+    desc: "Dragons like Ashwing and Cinderclaw inflict devastating destruction across territories. Slaying or capturing enemy dragons can shift the balance of power across the realm.",
+  },
+  {
+    title: "Victory Mandate",
+    desc: "Absolute rule is achieved either by conquering and holding 4 of the 6 realm provinces or maintaining an unbroken Throne Streak at the Crown of Ashes.",
+  },
 ];
 
 export function houseById(id: number) {

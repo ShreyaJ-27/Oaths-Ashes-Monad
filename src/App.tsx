@@ -8,10 +8,23 @@ import {
   eventText,
   houseById,
   houseMeta,
+  realmAnnals,
+  realmRules,
   territoryById,
   territoryMeta,
 } from "./gameMeta";
+import { ReferenceGallery } from "./ReferenceGallery";
 import { GAME_CONFIG } from "./types";
+
+const getInitialScreen = (): Screen => {
+  if (typeof window !== "undefined") {
+    const path = window.location.pathname.replace(/\/+$/, "");
+    if (path === "/reference-gallery") {
+      return "reference-gallery";
+    }
+  }
+  return "menu";
+};
 
 const actionOptions = [
   { id: GAME_CONFIG.actions.Attack, name: "Attack", icon: "/assets/icons/attack.png", targetType: GAME_CONFIG.targetTypes.Territory },
@@ -57,7 +70,8 @@ export function App() {
   } = useGame();
 
   const [selectedHouse, setSelectedHouse] = useState(5);
-  const [activeScreen, setActiveScreen] = useState<Screen>("menu");
+  const [activeScreen, setActiveScreen] = useState<Screen>(getInitialScreen);
+  const [chronicleTab, setChronicleTab] = useState<"campaign" | "annals" | "houses" | "territories" | "rules">("annals");
   const [selectedTerritoryId, setSelectedTerritoryId] = useState(6);
   const [selectedDragonId, setSelectedDragonId] = useState(1);
   const [selectedAction, setSelectedAction] = useState<number>(GAME_CONFIG.actions.Tax);
@@ -103,6 +117,29 @@ export function App() {
     const interval = window.setInterval(tick, 1000);
     return () => window.clearInterval(interval);
   }, [gameState?.match.roundDeadline, gameState?.match.round]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.replace(/\/+$/, "");
+      if (path === "/reference-gallery") {
+        setActiveScreen("reference-gallery");
+      } else if (activeScreen === "reference-gallery") {
+        setActiveScreen("menu");
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [activeScreen]);
+
+  useEffect(() => {
+    if (activeScreen === "chronicle") {
+      if (gameState && gameState.events.length > 0) {
+        setChronicleTab("campaign");
+      } else if (!gameState) {
+        setChronicleTab("annals");
+      }
+    }
+  }, [activeScreen, gameState]);
 
   const handleNewGame = async () => {
     try {
@@ -189,7 +226,15 @@ export function App() {
   };
 
   const requireGame = (screen: Screen) => {
-    if (!gameState && screen !== "menu" && screen !== "houses" && screen !== "settings") {
+    if (
+      !gameState &&
+      screen !== "menu" &&
+      screen !== "houses" &&
+      screen !== "settings" &&
+      screen !== "chronicle" &&
+      screen !== "monad" &&
+      screen !== "reference-gallery"
+    ) {
       return;
     }
     setActiveScreen(screen);
@@ -233,6 +278,17 @@ export function App() {
     },
   ];
 
+  if (activeScreen === "reference-gallery") {
+    return (
+      <ReferenceGallery
+        onBack={() => {
+          window.history.pushState({}, "", "/");
+          setActiveScreen("menu");
+        }}
+      />
+    );
+  }
+
   return (
     <main className="oaths-shell">
       <div className={`play-canvas screen-${activeScreen}`}>
@@ -251,7 +307,7 @@ export function App() {
                   <button onClick={() => void handleJoinMatch()} disabled={loading}>
                     Join Match
                   </button>
-                  <button onClick={() => requireGame("chronicle")}>Chronicle</button>
+                  <button onClick={() => setActiveScreen("chronicle")}>Chronicle</button>
                   <button onClick={() => setActiveScreen("monad")}>Monad</button>
                   <button onClick={() => setSettingsOpen(true)}>Settings</button>
                   <button onClick={exitToMenu}>Exit</button>
@@ -711,36 +767,186 @@ export function App() {
           <section className="screen panel-screen">
             <header className="screen-head">
               <h2>Chronicle</h2>
-              <button className="ghost" onClick={() => (gameState ? setActiveScreen("war") : setActiveScreen("menu"))}>
+              <button
+                className="ghost"
+                onClick={() => (gameState ? setActiveScreen("war") : setActiveScreen("menu"))}
+              >
                 Back
               </button>
             </header>
-            <div className="event-list dense">
-              {(gameState?.events.length ? gameState.events : []).map((event) => {
-                const actorId = asNumber(
-                  event.args.houseId ?? event.args.newOwnerHouseId ?? event.args.ownerHouseId
-                );
-                const tone = actorId ? houseById(actorId).tone : "ember";
-                return (
-                  <div className="event-row" key={event.id}>
-                    <img
-                      src={actorId ? houseById(actorId).sigil : "/assets/icons/reputation.png"}
-                      alt=""
-                      className={`event-icon ${tone}`}
-                    />
-                    <p>
-                      <b>Round {asNumber(event.args.round) || event.blockNumber}:</b> {eventText(event)}
+
+            <div className="chronicle-tabs">
+              {gameState && (
+                <button
+                  type="button"
+                  className={chronicleTab === "campaign" ? "active" : ""}
+                  onClick={() => setChronicleTab("campaign")}
+                >
+                  Campaign Events ({gameState.events.length})
+                </button>
+              )}
+              <button
+                type="button"
+                className={chronicleTab === "annals" ? "active" : ""}
+                onClick={() => setChronicleTab("annals")}
+              >
+                Annals of the Realm
+              </button>
+              <button
+                type="button"
+                className={chronicleTab === "houses" ? "active" : ""}
+                onClick={() => setChronicleTab("houses")}
+              >
+                The Six Houses
+              </button>
+              <button
+                type="button"
+                className={chronicleTab === "territories" ? "active" : ""}
+                onClick={() => setChronicleTab("territories")}
+              >
+                Strongholds &amp; Dragons
+              </button>
+              <button
+                type="button"
+                className={chronicleTab === "rules" ? "active" : ""}
+                onClick={() => setChronicleTab("rules")}
+              >
+                Decrees &amp; Laws
+              </button>
+            </div>
+
+            {chronicleTab === "campaign" && gameState && (
+              <div className="event-list dense">
+                {gameState.events.length > 0 ? (
+                  gameState.events.map((event) => {
+                    const actorId = asNumber(
+                      event.args.houseId ?? event.args.newOwnerHouseId ?? event.args.ownerHouseId
+                    );
+                    const tone = actorId ? houseById(actorId).tone : "ember";
+                    return (
+                      <div className="event-row" key={event.id}>
+                        <img
+                          src={actorId ? houseById(actorId).sigil : "/assets/icons/reputation.png"}
+                          alt=""
+                          className={`event-icon ${tone}`}
+                        />
+                        <p>
+                          <b>Round {asNumber(event.args.round) || event.blockNumber}:</b> {eventText(event)}
+                        </p>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="empty-state">
+                    <h3>Active Campaign — Round {gameState.match.round}</h3>
+                    <p>Orders are being sealed on Monad. Round events will record here as battles resolve.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {chronicleTab === "annals" && (
+              <div className="event-list dense">
+                {realmAnnals.map((annal) => {
+                  const house = annal.houseId ? houseById(annal.houseId) : null;
+                  return (
+                    <div className="event-row" key={annal.id}>
+                      <img
+                        src={annal.icon || house?.sigil || "/assets/icons/reputation.png"}
+                        alt=""
+                        className={`event-icon ${house ? house.tone : "ember"}`}
+                      />
+                      <div>
+                        <p style={{ margin: 0 }}>
+                          <b>{annal.era}:</b> <span style={{ color: "#f0c65c" }}>{annal.title}</span>
+                        </p>
+                        <p style={{ margin: "4px 0 0", color: "#b8aa92", fontSize: "12px", lineHeight: "1.4" }}>
+                          {annal.text}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {chronicleTab === "houses" && (
+              <div className="dense" style={{ display: "grid", gap: "10px" }}>
+                {houseMeta.map((house) => (
+                  <div key={house.id} className="chronicle-card" style={{ borderLeft: `3px solid var(--${house.tone})` }}>
+                    <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "8px" }}>
+                      <img src={house.sigil} alt="" style={{ width: "36px", height: "36px" }} />
+                      <div>
+                        <strong style={{ color: "#f0c65c", fontSize: "14px", display: "block" }}>{house.name}</strong>
+                        <small style={{ color: "#b8aa92" }}>{house.subtitle} · Leader: {house.leader}</small>
+                      </div>
+                    </div>
+                    <p style={{ margin: "2px 0 6px", color: "#e4d9c4", fontStyle: "italic", fontSize: "12px" }}>
+                      "{house.motto}"
+                    </p>
+                    <p style={{ margin: "2px 0 8px", color: "#b8aa92", fontSize: "12px" }}>
+                      {house.lore}
+                    </p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "6px", fontSize: "11px", color: "#a89469" }}>
+                      <div><span>Passive:</span> <b style={{ color: "#eee" }}>{house.passive}</b></div>
+                      <div><span>Strength:</span> <b style={{ color: "#82c88b" }}>{house.strength}</b></div>
+                      <div><span>Weakness:</span> <b style={{ color: "#e06d54" }}>{house.weakness}</b></div>
+                      <div><span>Dragon:</span> <b style={{ color: "#f0c65c" }}>{house.dragon}</b></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {chronicleTab === "territories" && (
+              <div className="dense" style={{ display: "grid", gap: "12px" }}>
+                <div>
+                  <h3 style={{ color: "#f0c65c", margin: "0 0 8px", fontSize: "13px", textTransform: "uppercase" }}>Strategic Strongholds</h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "8px" }}>
+                    {territoryMeta.map((t) => (
+                      <div key={t.id} className="chronicle-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <strong style={{ color: "#eee" }}>{t.name}</strong>
+                          <small style={{ color: "#f0c65c" }}>{t.label}</small>
+                        </div>
+                        <p style={{ margin: "4px 0 0", color: "#b8aa92", fontSize: "12px" }}>
+                          Terrain: {t.terrain} {t.id === 6 && "· Seat of the Throne"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 style={{ color: "#f0c65c", margin: "10px 0 8px", fontSize: "13px", textTransform: "uppercase" }}>Legendary Dragons</h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "8px" }}>
+                    {dragonMeta.map((d) => (
+                      <div key={d.id} className="chronicle-card" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                        <img src={d.art} alt="" style={{ width: "42px", height: "42px", objectFit: "contain", border: "1px solid #2a303b", background: "#0a0c12" }} />
+                        <div>
+                          <strong style={{ color: "#f0c65c" }}>{d.name}</strong>
+                          <p style={{ margin: "2px 0 0", color: "#b8aa92", fontSize: "12px" }}>{d.type}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {chronicleTab === "rules" && (
+              <div className="dense" style={{ display: "grid", gap: "8px" }}>
+                {realmRules.map((rule, idx) => (
+                  <div key={idx} className="chronicle-card">
+                    <strong style={{ color: "#f0c65c", fontSize: "13px", display: "block", marginBottom: "4px" }}>
+                      {rule.title}
+                    </strong>
+                    <p style={{ margin: 0, color: "#c5b89d", fontSize: "12px", lineHeight: "1.4" }}>
+                      {rule.desc}
                     </p>
                   </div>
-                );
-              })}
-              {!gameState?.events.length && (
-                <div className="empty-state">
-                  <h3>The chronicle awaits</h3>
-                  <p>Start a campaign to record the war.</p>
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -905,7 +1111,17 @@ export function App() {
                 <button onClick={() => void handleNewGame()}>New Match</button>
                 <button className="danger" onClick={() => setSettingsOpen(false)}>Close</button>
               </div>
-              <a className="gallery-link" href="/reference-gallery">Open Reference Gallery</a>
+              <button
+                type="button"
+                className="gallery-link"
+                onClick={() => {
+                  setSettingsOpen(false);
+                  window.history.pushState({}, "", "/reference-gallery");
+                  setActiveScreen("reference-gallery");
+                }}
+              >
+                Open Reference Gallery
+              </button>
             </div>
           </div>
         )}

@@ -12,7 +12,7 @@ import {
 } from "./gameMeta";
 
 /** Dense composition gallery matching the visual reference collage. */
-export function ReferenceGallery() {
+export function ReferenceGallery({ onBack }: { onBack?: () => void } = {}) {
   const state = useMemo(() => {
     let game = createLocalGame(5);
     game = applyLocalAction(
@@ -40,7 +40,17 @@ export function ReferenceGallery() {
   return (
     <main className="oaths-shell gallery-shell">
       <div className="gallery-toolbar">
-        <a href="/">← Back to Game</a>
+        {onBack ? (
+          <button
+            className="ghost"
+            onClick={onBack}
+            style={{ cursor: "pointer", background: "none", border: "1px solid #2a303b", color: "#f0c65c", padding: "4px 8px" }}
+          >
+            ← Back to Game
+          </button>
+        ) : (
+          <a href="/">← Back to Game</a>
+        )}
         <span>Reference Gallery · populated QA composition · 1536×1024 canvas</span>
       </div>
       <div className="game-canvas gallery-canvas">
