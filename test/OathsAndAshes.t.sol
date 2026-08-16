@@ -418,15 +418,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Tax, OathsAndAshes.TargetType.Territory, 1, 1, deadline
         );
         bytes memory fortifySig = _signIntent(
-            HOUSE_1_KEY,
-            matchId,
-            1,
-            1,
-            OathsAndAshes.Action.Fortify,
-            OathsAndAshes.TargetType.Territory,
-            1,
-            1,
-            deadline
+            HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Fortify, OathsAndAshes.TargetType.Territory, 1, 1, deadline
         );
 
         OathsAndAshes.Intent[] memory intents = new OathsAndAshes.Intent[](1);
