@@ -34,7 +34,7 @@ describe("Phase 3 Integration Tests", () => {
 
   it("should verify game config constants", () => {
     expect(GAME_CONFIG.maxRounds).toBe(10);
-    expect(GAME_CONFIG.roundSeconds).toBe(10);
+    expect(GAME_CONFIG.roundSeconds).toBe(45);
     expect(GAME_CONFIG.houses.length).toBe(6);
     expect(GAME_CONFIG.actions.Attack).toBe(1);
     expect(GAME_CONFIG.actions.Diplomacy).toBe(4);

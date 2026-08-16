@@ -1,4 +1,4 @@
-import { Contract, BrowserProvider, toBeHex, getAddress, AbiCoder } from "ethers";
+import { Contract, BrowserProvider } from "ethers";
 import { MONAD_CONFIG, GAME_CONFIG, Intent } from "./types";
 import contractABI from "../out/OathsAndAshes.sol/OathsAndAshes.json";
 
@@ -19,7 +19,7 @@ export class GameContract {
   setSigner(signer: any) {
     this.signer = signer;
     if (this.contract) {
-      this.contract = this.contract.connect(signer);
+      this.contract = this.contract.connect(signer) as Contract;
     }
   }
 
@@ -38,7 +38,10 @@ export class GameContract {
     
     // Submit transaction
     const tx = await this.contract.createMatch();
-    await tx.wait();
+    const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error("Create match transaction failed");
+    }
     
     // New match ID is currentCounter + 1
     return currentCounter + 1n;
@@ -50,6 +53,9 @@ export class GameContract {
 
     const tx = await this.contract.joinMatch(matchId, houseId);
     const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error("Join house transaction failed");
+    }
     return receipt.hash;
   }
 
@@ -70,6 +76,9 @@ export class GameContract {
       signature: intent.signature,
     });
     const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error("Intent transaction failed");
+    }
     return receipt.hash;
   }
 
@@ -79,7 +88,15 @@ export class GameContract {
 
     const tx = await this.contract.settleRound(matchId);
     const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error("Settlement transaction failed");
+    }
     return receipt.hash;
+  }
+
+  async getHousePlayer(matchId: bigint, houseId: number): Promise<string> {
+    if (!this.contract) throw new Error("Contract not initialized");
+    return this.contract.houseToPlayer(matchId, houseId);
   }
 
   // Get match summary
@@ -166,6 +183,95 @@ export class GameContract {
     if (!this.contract) throw new Error("Contract not initialized");
 
     return this.contract.usedNonce(matchId, houseId);
+  }
+
+  async getRecentEvents(matchId: bigint, fromBlockDepth = 1000) {
+    if (!this.contract || !this.provider) throw new Error("Contract not initialized");
+
+    const eventNames = [
+      "MatchCreated",
+      "IntentSubmitted",
+      "IntentRejected",
+      "RoundResolved",
+      "TerritoryCaptured",
+      "FortificationRaised",
+      "TerritoryAttackResolved",
+      "DragonStrike",
+      "DragonWounded",
+      "DragonKilled",
+      "DragonCaptured",
+      "TaxCollected",
+      "ThroneCaptured",
+      "MatchEnded",
+      "AllianceFormed",
+      "AllianceExpired",
+      "Betrayal",
+      "VengeanceDeclared",
+      "SabotageResolved",
+      "ReputationChanged",
+    ];
+
+    const blockNumber = await this.provider.getBlockNumber();
+    const fromBlock = Math.max(0, blockNumber - fromBlockDepth);
+    const events: Array<{
+      id: string;
+      name: string;
+      blockNumber: number;
+      transactionHash: string;
+      logIndex: number;
+      args: Record<string, unknown>;
+    }> = [];
+
+    await Promise.all(
+      eventNames.map(async (eventName) => {
+        try {
+          const fragment = this.contract!.interface.getEvent(eventName);
+          if (!fragment) return;
+
+          const topic = fragment.topicHash;
+          const logs = await this.provider!.getLogs({
+            address: MONAD_CONFIG.contractAddress,
+            topics: [topic],
+            fromBlock,
+            toBlock: "latest",
+          });
+
+          for (const log of logs) {
+            const parsed = this.contract!.interface.parseLog({
+              topics: log.topics as string[],
+              data: log.data,
+            });
+            if (!parsed) continue;
+
+            const argMap: Record<string, unknown> = {};
+            parsed.fragment.inputs.forEach((input, index) => {
+              const value = parsed.args[index];
+              argMap[input.name || String(index)] = value;
+            });
+
+            if (argMap.matchId !== undefined && BigInt(argMap.matchId as any) !== matchId) {
+              continue;
+            }
+
+            events.push({
+              id: `${log.transactionHash}-${log.index}`,
+              name: parsed.name,
+              blockNumber: log.blockNumber,
+              transactionHash: log.transactionHash,
+              logIndex: log.index,
+              args: argMap,
+            });
+          }
+        } catch {
+          // Some deployed ABIs may not expose every planned event; skip safely.
+        }
+      })
+    );
+
+    return events.sort((a, b) => {
+      if (a.blockNumber !== b.blockNumber) return b.blockNumber - a.blockNumber;
+      return b.logIndex - a.logIndex;
+    });
   }
 }
 
