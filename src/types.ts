@@ -9,7 +9,7 @@ export const MONAD_CONFIG = {
 // Game constants
 export const GAME_CONFIG = {
   maxRounds: 10,
-  roundSeconds: 10,
+  roundSeconds: 45,
   houses: [
     { id: 1, name: "Ashen Vale" },
     { id: 2, name: "Iron Briar" },

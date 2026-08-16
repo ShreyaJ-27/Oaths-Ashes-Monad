@@ -57,7 +57,7 @@ export function Events({
 
           const logs = await provider.getLogs({
             address: MONAD_CONFIG.contractAddress,
-            topics: filter.topics,
+            topics: await (filter as any).getTopicFilter(),
             fromBlock: startBlock,
             toBlock: "latest",
           });
