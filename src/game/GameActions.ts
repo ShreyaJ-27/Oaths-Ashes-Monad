@@ -1,39 +1,39 @@
 import type { Signer } from "ethers";
-import { gameContract } from "../contract";
-import { createDeadline, createIntentMessage, signIntent, validateIntent } from "../signing";
-import { GAME_CONFIG } from "../types";
+import { createIntentMessage, signIntent, validateIntent } from "../signing";
 import { monadAdapter } from "./MonadAdapter";
 import type { ActionRequest, GameState, TxPhase } from "./types";
+import type { PendingOrder } from "./pendingOrder";
+import { fromSignedIntent } from "./pendingOrder";
+import { GAME_CONFIG, type Intent } from "../types";
 
 export type ActionCallbacks = {
   onPhase: (phase: TxPhase) => void;
 };
 
-export async function submitMonadAction(
+export async function signMonadOrder(
   state: GameState,
   signer: Signer,
   playerAddress: string,
   request: ActionRequest,
   callbacks: ActionCallbacks
-): Promise<void> {
+): Promise<PendingOrder> {
   if (state.mode !== "MONAD") throw new Error("Not in Monad mode");
-  if (state.pendingAction) throw new Error("Orders already sealed this round");
   if (state.match.status !== 1) throw new Error("Match finished");
 
   const now = Math.floor(Date.now() / 1000);
-  if (state.match.roundDeadline - now < 3) {
+  if (state.match.roundDeadline - now < 2) {
     throw new Error("Round deadline too close — wait for settlement");
   }
 
   const matchId = state.match.id;
   const [match, usedNonce] = await Promise.all([
-    gameContract.getMatchSummary(matchId),
+    monadAdapter.getMatchSummary(matchId),
     monadAdapter.getUsedNonce(matchId, state.playerHouseId),
   ]);
 
   const round = Number(match.round);
   const nonce = usedNonce + 1n;
-  const deadline = createDeadline(45);
+  const deadline = BigInt(Number(match.roundDeadline) + 120);
 
   const message = createIntentMessage(
     matchId,
@@ -54,11 +54,10 @@ export async function submitMonadAction(
 
   callbacks.onPhase("signing");
   const signature = await signIntent(signer, message);
+  callbacks.onPhase("locked");
 
-  callbacks.onPhase("submitting");
-  await gameContract.submitIntent({ ...message, signature });
-
-  callbacks.onPhase("confirmed");
+  const intent: Intent = { ...message, signature };
+  return fromSignedIntent(intent);
 }
 
 export function validateActionTarget(
@@ -77,6 +76,20 @@ export function validateActionTarget(
   if (request.action === GAME_CONFIG.actions.Fortify || request.action === GAME_CONFIG.actions.Tax) {
     const target = state.territories.find((t) => t.territoryId === request.targetId);
     if (!target || target.ownerHouseId !== actor.houseId) return "Can only act on owned provinces";
+  }
+
+  if (request.action === GAME_CONFIG.actions.Sabotage) {
+    const target = state.territories.find((t) => t.territoryId === request.targetId);
+    if (!target) return "Invalid target";
+    if (target.ownerHouseId === actor.houseId) return "Cannot sabotage your own province";
+  }
+
+  if (request.action === GAME_CONFIG.actions.Dragonstrike) {
+    const target = state.territories.find((t) => t.territoryId === request.targetId);
+    if (!target) return "Invalid target";
+    if (target.ownerHouseId === actor.houseId) return "Choose an enemy province";
+    const dragon = state.dragons.find((d) => d.ownerHouseId === actor.houseId && d.alive);
+    if (!dragon) return "No bonded dragon available";
   }
 
   if (request.action === GAME_CONFIG.actions.Diplomacy) {

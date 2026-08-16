@@ -51,6 +51,7 @@ export function App() {
     connect,
     startNewGame,
     joinHouse,
+    reconnectMatch,
     submitAction,
     advanceRound,
   } = useGame();
@@ -106,8 +107,8 @@ export function App() {
   const handleNewGame = async () => {
     try {
       if (mode === "MONAD" && !connected) await connect();
-      await startNewGame();
-      setActiveScreen("houses");
+      const nextScreen = await startNewGame();
+      setActiveScreen(nextScreen);
     } catch {
       /* surfaced via context */
     }
@@ -115,7 +116,15 @@ export function App() {
 
   const handleJoinMatch = async () => {
     try {
-      if (mode === "MONAD" && !connected) await connect();
+      if (mode === "MONAD") {
+        if (!connected) await connect();
+        const restored = await reconnectMatch();
+        if (restored) {
+          setActiveScreen("war");
+          return;
+        }
+        return;
+      }
       setActiveScreen("houses");
     } catch {
       /* surfaced via context */
@@ -124,9 +133,27 @@ export function App() {
 
   const enterWarRoom = async () => {
     try {
+      if (mode === "MONAD" && gameState) {
+        setActiveScreen("war");
+        return;
+      }
+      if (mode === "MONAD" && !matchId) {
+        if (!connected) await connect();
+        const restored = await reconnectMatch();
+        if (restored) {
+          setActiveScreen("war");
+          return;
+        }
+        const nextScreen = await startNewGame();
+        if (nextScreen === "war") {
+          setActiveScreen("war");
+          return;
+        }
+      }
       await joinHouse(selectedHouse);
       setSelectedTerritoryId(selectedHouse);
       setTargetId(selectedHouse);
+      setSelectedDragonId(selectedHouse === 5 ? 1 : selectedHouse === 6 ? 2 : 1);
       setActiveScreen("war");
     } catch {
       /* surfaced via context */
@@ -163,7 +190,6 @@ export function App() {
 
   const requireGame = (screen: Screen) => {
     if (!gameState && screen !== "menu" && screen !== "houses" && screen !== "settings") {
-      setActiveScreen("houses");
       return;
     }
     setActiveScreen(screen);
@@ -226,13 +252,18 @@ export function App() {
                     Join Match
                   </button>
                   <button onClick={() => requireGame("chronicle")}>Chronicle</button>
+                  <button onClick={() => setActiveScreen("monad")}>Monad</button>
                   <button onClick={() => setSettingsOpen(true)}>Settings</button>
                   <button onClick={exitToMenu}>Exit</button>
                 </div>
                 <div className="hud-note">
                   {mode === "MONAD"
                     ? connected
-                      ? `Monad Testnet · Match ${matchId?.toString() || "pending"}`
+                      ? gameState
+                        ? `Monad Testnet · Match ${matchId?.toString()} · ${houseById(gameState.playerHouseId).name}`
+                        : matchId
+                          ? `Monad Testnet · Match ${matchId.toString()} · choose house`
+                          : "Monad Testnet · start or join a match"
                       : "Connect wallet to play on Monad"
                     : "Local development mode"}
                 </div>
@@ -275,7 +306,11 @@ export function App() {
               </div>
             </div>
             <div className="screen-actions">
-              <button className="wide-action" onClick={() => void enterWarRoom()} disabled={loading}>
+              <button
+                className="wide-action"
+                onClick={() => void enterWarRoom()}
+                disabled={loading || (mode === "MONAD" && !connected && !matchId && !gameState)}
+              >
                 Confirm / Enter War Room
               </button>
               <button className="ghost" onClick={() => setActiveScreen("menu")}>
@@ -379,9 +414,22 @@ export function App() {
                   ))}
                 </optgroup>
               </select>
-              <button className="seal-action" onClick={() => void issueAction()} disabled={loading || gameState.pendingAction || txPhase === "signing" || txPhase === "submitting"}>
-                {gameState.pendingAction ? "Orders Sealed" : txPhase === "signing" ? "Signing..." : txPhase === "submitting" ? "Submitting..." : "Issue Order"}
+              <button
+                className="seal-action"
+                onClick={() => void issueAction()}
+                disabled={loading || settling || txPhase === "signing" || txPhase === "submitting"}
+              >
+                {settling
+                  ? "Settling Round..."
+                  : txPhase === "signing"
+                    ? "Signing..."
+                    : gameState.pendingAction
+                      ? "Replace Order"
+                      : "Lock Order"}
               </button>
+              {gameState.pendingAction && (
+                <p className="order-locked">ORDER LOCKED — awaiting round settlement on Monad</p>
+              )}
               {mode === "LOCAL" && (
                 <button className="seal-action" onClick={() => void advanceRound()} disabled={settling}>
                   Advance Round
@@ -459,8 +507,12 @@ export function App() {
             </header>
             {!gameState?.battle ? (
               <div className="empty-state battle-wait">
-                <h3>AWAITING BATTLE</h3>
-                <p>Orders are being prepared. Issue an Attack or Dragon Strike to open the field.</p>
+                <h3>{gameState?.pendingAction ? "ORDER LOCKED" : "AWAITING BATTLE"}</h3>
+                <p>
+                  {gameState?.pendingAction
+                    ? "Your signed order is sealed for this round. Monad will verify it at settlement."
+                    : "Lock an Attack or Dragon Strike order to open the field."}
+                </p>
                 <div className="battle-grid muted">
                   <div>
                     <small className="good">Attacker</small>
@@ -784,6 +836,45 @@ export function App() {
               <span>
                 Player <b>{shortAddress}</b>
               </span>
+            </div>
+          </section>
+        )}
+
+        {activeScreen === "monad" && (
+          <section className="screen panel-screen monad-screen">
+            <header className="screen-head">
+              <h2>Monad</h2>
+              <button className="ghost" onClick={() => setActiveScreen("menu")}>Back</button>
+            </header>
+            <div className="monad-panel">
+              <h3>The Realm Runs On-Chain</h3>
+              <p>
+                Oaths &amp; Ashes uses Monad Testnet as its verifiable settlement layer — not as a
+                button-for-every-click blockchain UI.
+              </p>
+              <div className="monad-flow">
+                <span>PLAYER</span>
+                <small>↓ signed orders (EIP-712, no gas)</small>
+                <span>OATHS &amp; ASHES</span>
+                <small>↓ round settlement (one transaction)</small>
+                <span>MONAD</span>
+                <small>↓ verified game state</small>
+              </div>
+              <ul className="monad-list">
+                <li>Verifiable battle resolution</li>
+                <li>Territory ownership</li>
+                <li>Resource and tax settlement</li>
+                <li>Dragon Strike outcomes</li>
+                <li>Immutable Chronicle events</li>
+                <li>Signed player orders</li>
+              </ul>
+              <p className="monad-powered">Powered by Monad Testnet</p>
+              <div className="compact-copy">
+                <p><span>Chain ID</span><b>10143</b></p>
+                <p><span>Contract</span><b>0x478643…d3010</b></p>
+                <p><span>Round flow</span><b>Sign order → settle round</b></p>
+                <p><span>Deployed upgrade</span><b>settleRoundWithIntents (redeploy for 1-tx settlement)</b></p>
+              </div>
             </div>
           </section>
         )}

@@ -9,12 +9,19 @@ import React, {
 } from "react";
 import type { Signer } from "ethers";
 import { createRepository, GameRepository } from "./GameRepository";
-import { submitMonadAction, validateActionTarget } from "./GameActions";
+import { signMonadOrder, validateActionTarget } from "./GameActions";
+import {
+  clearPendingOrder,
+  loadPendingOrder,
+  orderMatchesRound,
+  savePendingOrder,
+  toContractIntent,
+} from "./pendingOrder";
 import { defaultMode, loadSession, saveSession, clearSession } from "./session";
 import { connectWallet } from "./wallet";
 import type { ActionRequest, GameMode, GameState, TxPhase } from "./types";
-import { requestAiRound, requestSettle } from "./api";
 import { monadAdapter } from "./MonadAdapter";
+import { gameContract } from "../contract";
 
 type GameContextValue = {
   mode: GameMode;
@@ -30,8 +37,9 @@ type GameContextValue = {
   matchId: bigint | null;
   setMode: (mode: GameMode) => void;
   connect: () => Promise<void>;
-  startNewGame: () => Promise<void>;
+  startNewGame: () => Promise<"war" | "houses">;
   joinHouse: (houseId: number) => Promise<void>;
+  reconnectMatch: () => Promise<boolean>;
   refreshState: () => Promise<void>;
   submitAction: (req: ActionRequest) => Promise<void>;
   advanceRound: () => Promise<void>;
@@ -50,6 +58,7 @@ function friendlyError(err: unknown): string {
   if (/expired|deadline/i.test(message)) return "Round expired";
   if (/revert|rejected/i.test(message)) return "Transaction rejected";
   if (/nonce/i.test(message)) return "Nonce mismatch";
+  if (/already settled/i.test(message)) return "Round already settled";
   return message.length > 140 ? "Action unavailable" : message;
 }
 
@@ -88,8 +97,24 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       if (mode === "MONAD") {
         const restored = await repoRef.current.reconnectMonad(wallet.address);
         if (restored) {
-          setGameState(restored);
+          const pending = loadPendingOrder();
+          const withPending =
+            pending && orderMatchesRound(pending, restored.match.id, restored.match.round)
+              ? await monadAdapter.loadFullState(
+                  restored.match.id,
+                  restored.playerHouseId,
+                  wallet.address,
+                  pending
+                )
+              : restored;
+          setGameState(withPending);
           setMatchId(restored.match.id);
+          saveSession({
+            mode: "MONAD",
+            matchId: restored.match.id.toString(),
+            houseId: restored.playerHouseId,
+            playerAddress: wallet.address,
+          });
           setStatus("On-chain campaign restored.");
         }
       }
@@ -103,12 +128,17 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const refreshState = useCallback(async () => {
     if (!gameState || mode !== "MONAD" || !address || !matchId) return;
     try {
-      const pending = gameState.pendingAction;
+      const pending = loadPendingOrder();
+      if (pending && !orderMatchesRound(pending, matchId, gameState.match.round)) {
+        clearPendingOrder();
+      }
+      const activePending =
+        pending && orderMatchesRound(pending, matchId, gameState.match.round) ? pending : null;
       const next = await monadAdapter.loadFullState(
         matchId,
         gameState.playerHouseId,
         address,
-        pending
+        activePending
       );
       setGameState(next);
     } catch (err) {
@@ -116,7 +146,43 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }
   }, [gameState, mode, address, matchId]);
 
-  const startNewGame = useCallback(async () => {
+  const reconnectMatch = useCallback(async () => {
+    if (mode !== "MONAD") return false;
+    setError("");
+    if (!connected || !signerRef.current) {
+      await connect();
+    }
+    const playerAddress =
+      address || (signerRef.current ? await signerRef.current.getAddress() : "");
+    if (!playerAddress) return false;
+    const restored = await repoRef.current.reconnectMonad(playerAddress);
+    if (!restored) {
+      setError("No on-chain match found for this wallet. Start a new game.");
+      return false;
+    }
+    const pending = loadPendingOrder();
+    const withPending =
+      pending && orderMatchesRound(pending, restored.match.id, restored.match.round)
+        ? await monadAdapter.loadFullState(
+            restored.match.id,
+            restored.playerHouseId,
+            playerAddress,
+            pending
+          )
+        : restored;
+    setGameState(withPending);
+    setMatchId(restored.match.id);
+    saveSession({
+      mode: "MONAD",
+      matchId: restored.match.id.toString(),
+      houseId: restored.playerHouseId,
+      playerAddress,
+    });
+    setStatus("Reconnected to on-chain match.");
+    return true;
+  }, [mode, connected, address, connect]);
+
+  const startNewGame = useCallback(async (): Promise<"war" | "houses"> => {
     setError("");
     setLoading(true);
     try {
@@ -125,24 +191,44 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setGameState(null);
         setMatchId(null);
         setStatus("Choose your house for offline development mode.");
-        return;
+        return "houses";
       }
 
       if (!connected) {
         await connect();
       }
-      if (!signerRef.current) throw new Error("Wallet not connected");
+      if (!signerRef.current || !address) throw new Error("Wallet not connected");
+
+      const existingMatch = await monadAdapter.getPlayerMatch(address);
+      if (existingMatch !== 0n) {
+        const restored = await repoRef.current.reconnectMonad(address);
+        if (restored) {
+          setGameState(restored);
+          setMatchId(restored.match.id);
+          saveSession({
+            mode: "MONAD",
+            matchId: restored.match.id.toString(),
+            houseId: restored.playerHouseId,
+            playerAddress: address,
+          });
+          setStatus("Reconnected to your existing on-chain match.");
+          return "war";
+        }
+      }
 
       setStatus("Creating match on Monad...");
       const newMatchId = await repoRef.current.createMonadMatch();
       setMatchId(newMatchId);
+      setGameState(null);
       setStatus(`Match ${newMatchId.toString()} created. Choose your house.`);
+      return "houses";
     } catch (err) {
       setError(friendlyError(err));
+      throw err;
     } finally {
       setLoading(false);
     }
-  }, [mode, connected, connect]);
+  }, [mode, connected, connect, address]);
 
   const joinHouse = useCallback(
     async (houseId: number) => {
@@ -159,14 +245,45 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (!connected || !address) throw new Error("Wallet not connected");
-        if (!matchId) throw new Error("Match unavailable");
+
+        let activeMatchId = matchId;
+        if (!activeMatchId) {
+          const restored = await repoRef.current.reconnectMonad(address);
+          if (restored) {
+            setGameState(restored);
+            setMatchId(restored.match.id);
+            saveSession({
+              mode: "MONAD",
+              matchId: restored.match.id.toString(),
+              houseId: restored.playerHouseId,
+              playerAddress: address,
+            });
+            setStatus("Reconnected to on-chain match.");
+            return;
+          }
+          throw new Error("Match unavailable — create a match first");
+        }
+
+        const alreadyJoined = await monadAdapter.verifyHouseOwnership(activeMatchId, houseId, address);
+        if (alreadyJoined) {
+          const next = await monadAdapter.loadFullState(activeMatchId, houseId, address);
+          setGameState(next);
+          saveSession({
+            mode: "MONAD",
+            matchId: activeMatchId.toString(),
+            houseId,
+            playerAddress: address,
+          });
+          setStatus("House confirmed on-chain. Entering War Room.");
+          return;
+        }
 
         setStatus("Joining house on Monad...");
-        const next = await repoRef.current.joinMonad(matchId, houseId, address);
+        const next = await repoRef.current.joinMonad(activeMatchId, houseId, address);
         setGameState(next);
         saveSession({
           mode: "MONAD",
-          matchId: matchId.toString(),
+          matchId: activeMatchId.toString(),
           houseId,
           playerAddress: address,
         });
@@ -180,6 +297,55 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     },
     [mode, connected, address, matchId]
   );
+
+  const settleIfDue = useCallback(async () => {
+    if (mode !== "MONAD" || !gameState || !matchId || !address) return;
+    const now = Math.floor(Date.now() / 1000);
+    if (now < gameState.match.roundDeadline + 2) return;
+    if (gameState.match.status !== 1) return;
+    if (settling) return;
+
+    setSettling(true);
+    setTxPhase("submitting");
+    setStatus("Settling round on Monad...");
+    try {
+      const supportsIntents = await repoRef.current.supportsSettlementIntents();
+      const pending = loadPendingOrder();
+      const hasPending =
+        pending && orderMatchesRound(pending, matchId, gameState.match.round);
+
+      if (hasPending && supportsIntents) {
+        await repoRef.current.settleMonad(matchId, [toContractIntent(pending)]);
+        clearPendingOrder();
+      } else if (hasPending) {
+        setStatus("Submitting signed order on Monad...");
+        await gameContract.submitIntent(toContractIntent(pending));
+        clearPendingOrder();
+        await repoRef.current.settleMonad(matchId);
+      } else {
+        await repoRef.current.settleMonad(matchId);
+      }
+
+      const next = await monadAdapter.loadFullState(matchId, gameState.playerHouseId, address, null);
+      setGameState(next);
+      setTxPhase("confirmed");
+      setStatus(`Round ${next.match.round} begins on Monad.`);
+    } catch (err) {
+      const message = friendlyError(err);
+      if (/already settled/i.test(message)) {
+        clearPendingOrder();
+        const next = await monadAdapter.loadFullState(matchId, gameState.playerHouseId, address, null);
+        setGameState(next);
+        setTxPhase("idle");
+        setStatus(`Round ${next.match.round} advanced.`);
+      } else {
+        setTxPhase("failed");
+        setError(message);
+      }
+    } finally {
+      setSettling(false);
+    }
+  }, [mode, gameState, matchId, address, settling]);
 
   const submitAction = useCallback(
     async (req: ActionRequest) => {
@@ -199,15 +365,16 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         const validation = validateActionTarget(gameState, req);
         if (validation) throw new Error(validation);
 
-        await submitMonadAction(gameState, signerRef.current, address, req, {
+        const pendingOrder = await signMonadOrder(gameState, signerRef.current, address, req, {
           onPhase: setTxPhase,
         });
+        savePendingOrder(pendingOrder);
 
         const next = await monadAdapter.loadFullState(
           gameState.match.id,
           gameState.playerHouseId,
           address,
-          true
+          pendingOrder
         );
         setGameState(next);
         saveSession({
@@ -217,8 +384,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
           playerAddress: address,
           intentSubmittedRound: gameState.match.round,
         });
-        setTxPhase("confirmed");
-        setStatus("Intent confirmed on Monad.");
+        setStatus("Order locked for this round. Awaiting settlement.");
       } catch (err) {
         setTxPhase("failed");
         setError(friendlyError(err));
@@ -236,71 +402,32 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       setStatus(`Round ${next.match.round} begins (local).`);
       return;
     }
+    await settleIfDue();
+  }, [gameState, mode, settleIfDue]);
 
-    if (!matchId) return;
-    setSettling(true);
-    try {
-      await requestSettle(matchId);
-      const next = await monadAdapter.loadFullState(
-        matchId,
-        gameState.playerHouseId,
-        address,
-        false
-      );
-      setGameState(next);
-      setStatus(`Round ${next.match.round} resolved on Monad.`);
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setSettling(false);
-    }
-  }, [gameState, mode, matchId, address]);
-
-  // Sync loop: settlement + AI + refresh
+  // Auto-settle when round deadline passes (human wallet)
   useEffect(() => {
     if (mode !== "MONAD" || !gameState || gameState.match.status !== 1 || !matchId) return;
 
-    const tick = async () => {
-      const now = Math.floor(Date.now() / 1000);
-      const secondsLeft = Math.max(0, gameState.match.roundDeadline - now);
-
-      if (secondsLeft === 0 && !settling) {
-        setSettling(true);
-        try {
-          await requestSettle(matchId).catch(() =>
-            monadAdapter.settleRound(matchId).catch(() => undefined)
-          );
-          await requestAiRound(matchId).catch(() => undefined);
-          const next = await monadAdapter.loadFullState(
-            matchId,
-            gameState.playerHouseId,
-            address,
-            false
-          );
-          setGameState(next);
-        } finally {
-          setSettling(false);
-        }
-        return;
-      }
-
-      if (secondsLeft <= 3 && gameState.pendingAction) {
-        await requestAiRound(matchId).catch(() => undefined);
+    const tick = () => {
+      const secondsLeft = Math.max(0, gameState.match.roundDeadline - Math.floor(Date.now() / 1000));
+      if (secondsLeft === 0) {
+        void settleIfDue();
       }
     };
 
-    const interval = window.setInterval(() => void tick(), 2000);
+    const interval = window.setInterval(tick, 1500);
     return () => window.clearInterval(interval);
-  }, [mode, gameState?.match.roundDeadline, gameState?.match.round, matchId, address, settling]);
+  }, [mode, gameState?.match.roundDeadline, gameState?.match.round, matchId, settleIfDue]);
 
-  // Periodic state refresh
+  // Periodic state refresh from chain
   useEffect(() => {
     if (mode !== "MONAD" || !matchId || !gameState) return;
-    const interval = window.setInterval(() => void refreshState(), 8000);
+    const interval = window.setInterval(() => void refreshState(), 6000);
     return () => window.clearInterval(interval);
   }, [mode, matchId, gameState?.playerHouseId, refreshState]);
 
-  // Restore local session on mount
+  // Restore session on mount
   useEffect(() => {
     const session = loadSession();
     if (!session) return;
@@ -311,6 +438,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         setGameState(restored);
         setMatchId(restored.match.id);
       }
+    } else if (session.matchId) {
+      setMatchId(BigInt(session.matchId));
     }
   }, [setMode]);
 
@@ -331,6 +460,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       connect,
       startNewGame,
       joinHouse,
+      reconnectMatch,
       refreshState,
       submitAction,
       advanceRound,
@@ -352,6 +482,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       connect,
       startNewGame,
       joinHouse,
+      reconnectMatch,
       refreshState,
       submitAction,
       advanceRound,

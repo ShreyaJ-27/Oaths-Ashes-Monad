@@ -13,7 +13,7 @@ export class MonadAdapter {
     matchId: bigint,
     playerHouseId: number,
     playerAddress: string,
-    pendingAction = false
+    pendingOrder: import("./pendingOrder").PendingOrder | null = null
   ): Promise<GameState> {
     const [matchRaw, housesRaw, territoriesRaw, dragonsRaw, events] = await Promise.all([
       gameContract.getMatchSummary(matchId),
@@ -32,7 +32,7 @@ export class MonadAdapter {
       territories: territoriesRaw.map((t) => normalizeTerritory(t as Record<string, unknown>)),
       dragons: dragonsRaw.map((d) => normalizeDragon(d as Record<string, unknown>)),
       events,
-      pendingAction,
+      pendingOrder,
       syncStatus: "idle",
     });
   }
@@ -64,6 +64,18 @@ export class MonadAdapter {
 
   async settleRound(matchId: bigint): Promise<string> {
     return gameContract.settleRound(matchId);
+  }
+
+  async settleRoundWithIntents(matchId: bigint, intents: import("../types").Intent[]): Promise<string> {
+    return gameContract.settleRoundWithIntents(matchId, intents);
+  }
+
+  async supportsSettlementIntents(): Promise<boolean> {
+    return gameContract.supportsSettlementIntents();
+  }
+
+  async getMatchSummary(matchId: bigint) {
+    return gameContract.getMatchSummary(matchId);
   }
 
   async getUsedNonce(matchId: bigint, houseId: number): Promise<bigint> {

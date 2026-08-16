@@ -10,7 +10,8 @@ export type Screen =
   | "throne"
   | "inventory"
   | "profile"
-  | "settings";
+  | "settings"
+  | "monad";
 
 export type HouseMeta = {
   id: number;

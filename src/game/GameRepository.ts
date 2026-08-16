@@ -2,7 +2,6 @@ import type { GameMode } from "./types";
 import { localAdapter } from "./LocalAdapter";
 import { monadAdapter } from "./MonadAdapter";
 import type { ActionRequest, GameState } from "./types";
-import { bootstrapAiHouses } from "./api";
 
 export class GameRepository {
   constructor(private mode: GameMode) {}
@@ -15,8 +14,8 @@ export class GameRepository {
     this.mode = mode;
   }
 
-  async loadMonad(matchId: bigint, houseId: number, address: string, pending = false) {
-    return monadAdapter.loadFullState(matchId, houseId, address, pending);
+  async loadMonad(matchId: bigint, houseId: number, address: string, pendingOrder = null) {
+    return monadAdapter.loadFullState(matchId, houseId, address, pendingOrder);
   }
 
   async createMonadMatch() {
@@ -25,12 +24,18 @@ export class GameRepository {
 
   async joinMonad(matchId: bigint, houseId: number, address: string) {
     await monadAdapter.joinMatch(matchId, houseId, address);
-    await bootstrapAiHouses(matchId, houseId).catch(() => undefined);
     return monadAdapter.loadFullState(matchId, houseId, address);
   }
 
-  async settleMonad(matchId: bigint) {
+  async settleMonad(matchId: bigint, intents: import("../types").Intent[] = []) {
+    if (intents.length > 0) {
+      return monadAdapter.settleRoundWithIntents(matchId, intents);
+    }
     return monadAdapter.settleRound(matchId);
+  }
+
+  async supportsSettlementIntents() {
+    return monadAdapter.supportsSettlementIntents();
   }
 
   async reconnectMonad(address: string) {

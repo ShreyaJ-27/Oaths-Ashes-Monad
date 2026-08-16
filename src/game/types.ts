@@ -4,6 +4,7 @@ import type {
   MatchState,
   TerritoryState,
 } from "../types";
+import type { PendingOrder } from "./pendingOrder";
 
 export type GameMode = "MONAD" | "LOCAL";
 
@@ -11,6 +12,7 @@ export type TxPhase =
   | "idle"
   | "wallet_required"
   | "signing"
+  | "locked"
   | "submitting"
   | "confirming"
   | "confirmed"
@@ -46,6 +48,7 @@ export type GameState = {
   dragons: DragonState[];
   events: ChainEvent[];
   battle: BattleResult | null;
+  pendingOrder: PendingOrder | null;
   pendingAction: boolean;
   syncStatus: "idle" | "loading" | "syncing" | "error";
   chainError?: string;

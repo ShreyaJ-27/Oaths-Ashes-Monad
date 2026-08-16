@@ -116,6 +116,11 @@ contract OathsAndAshesTest is Test {
         game.submitIntent(intent);
     }
 
+    function _warpPastRoundDeadline(uint256 matchId) internal {
+        (,,,, uint64 roundDeadline,,,) = game.getMatchSummary(matchId);
+        vm.warp(uint256(roundDeadline) + 1);
+    }
+
     // ===== MATCH CREATION & JOINING =====
 
     function test_CreateMatch_Success() public {
@@ -184,7 +189,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Fortify, OathsAndAshes.TargetType.Territory, 1, 1, deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         (uint256 id,, uint8 round,,,,,) = game.getMatchSummary(matchId);
@@ -202,7 +207,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Fortify, OathsAndAshes.TargetType.Territory, 1, 1, deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         (uint8 terrId, uint8 owner,,, uint8 fort, bool isThrone,,) = game.getTerritoryState(matchId, 1);
@@ -220,7 +225,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Fortify, OathsAndAshes.TargetType.Territory, 1, 1, deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         (,,,, uint8 fort,,,) = game.getTerritoryState(matchId, 1);
@@ -238,7 +243,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Tax, OathsAndAshes.TargetType.Territory, 1, 1, deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         // House 1 should have more gold after tax
@@ -264,7 +269,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_2_KEY, matchId, 1, 2, OathsAndAshes.Action.Diplomacy, OathsAndAshes.TargetType.House, 1, 1, deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         // Test passes if diplomacy settlement completes without revert
@@ -282,7 +287,7 @@ contract OathsAndAshesTest is Test {
             HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Sabotage, OathsAndAshes.TargetType.House, 2, 1, deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         // Test passes if sabotage settlement completes without revert
@@ -308,7 +313,7 @@ contract OathsAndAshesTest is Test {
             deadline
         );
 
-        vm.warp(deadline + 1);
+        _warpPastRoundDeadline(matchId);
         game.settleRound(matchId);
 
         // Test passes if dragonstrike settlement completes without revert
@@ -321,19 +326,14 @@ contract OathsAndAshesTest is Test {
         uint256 matchId = game.createMatch();
         _joinAllHouses(matchId);
 
-        // Settle multiple rounds - just verify basic round progression
-        uint256 currentTime = block.timestamp;
         for (uint8 r = 1; r <= 3; r++) {
-            uint256 deadline = currentTime + 20;
-            // Use TAX action which generates gold instead of costing it
+            uint256 deadline = block.timestamp + 120;
             _submitIntent(
                 HOUSE_1_KEY, matchId, r, 1, OathsAndAshes.Action.Tax, OathsAndAshes.TargetType.Territory, 1, r, deadline
             );
 
-            vm.warp(deadline + 1);
+            _warpPastRoundDeadline(matchId);
             game.settleRound(matchId);
-
-            currentTime = deadline + 1;
         }
 
         (uint256 id, OathsAndAshes.MatchStatus status, uint8 round,,,,,) = game.getMatchSummary(matchId);
@@ -371,5 +371,83 @@ contract OathsAndAshesTest is Test {
     function test_DomainSeparator() public {
         bytes32 domainSep = game.getDomainSeparator();
         assertNotEq(domainSep, bytes32(0));
+    }
+
+    function test_SettleRoundWithIntents_NoSubmitTx() public {
+        uint256 matchId = game.createMatch();
+        vm.prank(house1);
+        game.joinMatch(matchId, 1);
+
+        (,,,, uint64 roundDeadline,,,) = game.getMatchSummary(matchId);
+        uint256 deadline = uint256(roundDeadline) + 120;
+        bytes memory sig = _signIntent(
+            HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Tax, OathsAndAshes.TargetType.Territory, 1, 1, deadline
+        );
+
+        OathsAndAshes.Intent[] memory intents = new OathsAndAshes.Intent[](1);
+        intents[0] = OathsAndAshes.Intent({
+            matchId: matchId,
+            round: 1,
+            houseId: 1,
+            action: OathsAndAshes.Action.Tax,
+            targetType: OathsAndAshes.TargetType.Territory,
+            targetId: 1,
+            nonce: 1,
+            deadline: deadline,
+            signer: house1,
+            signature: sig
+        });
+
+        vm.warp(roundDeadline + 1);
+        game.settleRoundWithIntents(matchId, intents);
+
+        assertEq(game.usedNonce(matchId, 1), 1);
+        (,, uint8 round,,,,,) = game.getMatchSummary(matchId);
+        assertEq(round, 2);
+    }
+
+    function test_SettleRoundWithIntents_ReplaceOrderBeforeDeadline() public {
+        uint256 matchId = game.createMatch();
+        vm.prank(house1);
+        game.joinMatch(matchId, 1);
+
+        (,,,, uint64 roundDeadline,,,) = game.getMatchSummary(matchId);
+        uint256 deadline = uint256(roundDeadline) + 120;
+
+        bytes memory taxSig = _signIntent(
+            HOUSE_1_KEY, matchId, 1, 1, OathsAndAshes.Action.Tax, OathsAndAshes.TargetType.Territory, 1, 1, deadline
+        );
+        bytes memory fortifySig = _signIntent(
+            HOUSE_1_KEY,
+            matchId,
+            1,
+            1,
+            OathsAndAshes.Action.Fortify,
+            OathsAndAshes.TargetType.Territory,
+            1,
+            1,
+            deadline
+        );
+
+        OathsAndAshes.Intent[] memory intents = new OathsAndAshes.Intent[](1);
+        intents[0] = OathsAndAshes.Intent({
+            matchId: matchId,
+            round: 1,
+            houseId: 1,
+            action: OathsAndAshes.Action.Fortify,
+            targetType: OathsAndAshes.TargetType.Territory,
+            targetId: 1,
+            nonce: 1,
+            deadline: deadline,
+            signer: house1,
+            signature: fortifySig
+        });
+
+        vm.warp(roundDeadline + 1);
+        game.settleRoundWithIntents(matchId, intents);
+
+        (,,,, uint8 fort,,,) = game.getTerritoryState(matchId, 1);
+        assertEq(fort, 1);
+        assertTrue(taxSig.length > 0);
     }
 }

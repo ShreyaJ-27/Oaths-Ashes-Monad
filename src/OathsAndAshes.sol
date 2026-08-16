@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 contract OathsAndAshes {
-    uint256 public constant ROUND_SECONDS = 10;
+    uint256 public constant ROUND_SECONDS = 30;
     uint256 public constant MAX_ROUNDS = 10;
     uint256 public matchCounter;
 
@@ -305,20 +305,58 @@ contract OathsAndAshes {
     }
 
     function submitIntent(Intent calldata intent) external {
+        require(intent.signer == msg.sender, "signer mismatch");
+        require(houseToPlayer[intent.matchId][intent.houseId] == msg.sender, "unauthorized house");
+        _registerIntent(intent, false);
+    }
+
+    function settleRoundWithIntents(uint256 matchId, Intent[] calldata intents) external {
+        Match storage matchState = matches[matchId];
+        require(matchState.id == matchId, "missing match");
+        require(matchState.status == MatchStatus.Active, "match inactive");
+        require(block.timestamp >= matchState.roundDeadline, "deadline not reached");
+        require(!roundSettled[matchId], "already settled");
+
+        roundSettled[matchId] = true;
+
+        for (uint256 i = 0; i < intents.length; i++) {
+            Intent calldata intent = intents[i];
+            require(intent.matchId == matchId, "match mismatch");
+            _registerIntent(intent, true);
+        }
+
+        _resolveRound(matchId);
+        emit RoundResolved(matchId, matchState.round);
+
+        if (matchState.round >= MAX_ROUNDS || _hasThroneWin(matchId)) {
+            _finalizeMatch(matchId);
+            return;
+        }
+
+        matchState.round++;
+        matchState.roundStart = uint64(block.timestamp);
+        matchState.roundDeadline = uint64(block.timestamp + ROUND_SECONDS);
+        roundSettled[matchId] = false;
+    }
+
+    function _registerIntent(Intent calldata intent, bool atSettlement) internal {
         require(intent.matchId != 0, "empty match");
         Match storage matchState = matches[intent.matchId];
         require(matchState.id == intent.matchId, "match missing");
         require(matchState.status == MatchStatus.Active, "match inactive");
         require(intent.round == matchState.round, "wrong round");
-        require(block.timestamp <= intent.deadline, "intent expired");
-        require(intent.signer == msg.sender, "signer mismatch");
+        if (atSettlement) {
+            require(intent.deadline >= matchState.roundDeadline, "intent expired");
+        } else {
+            require(block.timestamp <= intent.deadline, "intent expired");
+        }
         require(intent.houseId >= 1 && intent.houseId <= 6, "bad house");
-        require(houseToPlayer[intent.matchId][intent.houseId] == msg.sender, "unauthorized house");
+        require(houseToPlayer[intent.matchId][intent.houseId] == intent.signer, "unauthorized house");
         require(intent.nonce > 0, "bad nonce");
         require(usedNonce[intent.matchId][intent.houseId] != intent.nonce, "nonce used");
 
         bytes32 digest = _hashIntent(intent);
-        require(_recoverSigner(digest, intent.signature) == msg.sender, "bad signature");
+        require(_recoverSigner(digest, intent.signature) == intent.signer, "bad signature");
 
         usedNonce[intent.matchId][intent.houseId] = intent.nonce;
         submittedIntents[intent.matchId][intent.houseId] = intent;
@@ -332,7 +370,7 @@ contract OathsAndAshes {
             intent.targetId,
             intent.nonce,
             intent.deadline,
-            msg.sender
+            intent.signer
         );
     }
 

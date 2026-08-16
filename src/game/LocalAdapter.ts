@@ -20,7 +20,7 @@ function fromLocal(local: LocalGameState): GameState {
     territories: local.territories,
     dragons: local.dragons,
     events: local.events,
-    pendingAction: local.pendingAction,
+    pendingOrder: null,
     syncStatus: "idle",
   });
 }

@@ -82,7 +82,7 @@ export class GameContract {
     return receipt.hash;
   }
 
-  // Settle round
+  // Settle round (no intents — default actions only)
   async settleRound(matchId: bigint): Promise<string> {
     if (!this.contract || !this.signer) throw new Error("Contract not initialized");
 
@@ -92,6 +92,40 @@ export class GameContract {
       throw new Error("Settlement transaction failed");
     }
     return receipt.hash;
+  }
+
+  // Settle round with signed intents (preferred gameplay path)
+  async settleRoundWithIntents(matchId: bigint, intents: Intent[]): Promise<string> {
+    if (!this.contract || !this.signer) throw new Error("Contract not initialized");
+    if (!this.supportsSettlementIntents()) {
+      throw new Error("Contract upgrade required: settleRoundWithIntents not deployed");
+    }
+
+    const tx = await this.contract.settleRoundWithIntents(
+      matchId,
+      intents.map((intent) => ({
+        matchId: intent.matchId,
+        round: intent.round,
+        houseId: intent.houseId,
+        action: intent.action,
+        targetType: intent.targetType,
+        targetId: intent.targetId,
+        nonce: intent.nonce,
+        deadline: intent.deadline,
+        signer: intent.signer,
+        signature: intent.signature,
+      }))
+    );
+    const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      throw new Error("Settlement transaction failed");
+    }
+    return receipt.hash;
+  }
+
+  supportsSettlementIntents(): boolean {
+    if (!this.contract) return false;
+    return Boolean(this.contract.interface.getFunction("settleRoundWithIntents"));
   }
 
   async getHousePlayer(matchId: bigint, houseId: number): Promise<string> {

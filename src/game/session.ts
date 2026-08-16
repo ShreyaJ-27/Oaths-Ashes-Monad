@@ -27,7 +27,3 @@ export function defaultMode(): GameMode {
   if (envMode === "LOCAL") return "LOCAL";
   return "MONAD";
 }
-
-export function apiBaseUrl(): string {
-  return import.meta.env.VITE_API_URL || "";
-}

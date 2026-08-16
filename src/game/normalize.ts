@@ -1,5 +1,7 @@
 import type { DragonState, HouseState, MatchState, TerritoryState } from "../types";
 import type { BattleResult, ChainEvent, GameState } from "./types";
+import type { PendingOrder } from "./pendingOrder";
+import { orderMatchesRound } from "./pendingOrder";
 
 export function asNumber(value: unknown): number {
   return Number(value ?? 0);
@@ -117,10 +119,11 @@ export function buildGameState(input: {
   territories: TerritoryState[];
   dragons: DragonState[];
   events: ChainEvent[];
-  pendingAction?: boolean;
+  pendingOrder?: PendingOrder | null;
   syncStatus?: GameState["syncStatus"];
   chainError?: string;
 }): GameState {
+  const pendingOrder = input.pendingOrder ?? null;
   return {
     mode: input.mode,
     match: input.match,
@@ -131,7 +134,8 @@ export function buildGameState(input: {
     dragons: input.dragons,
     events: input.events,
     battle: deriveBattleFromEvents(input.events, input.playerHouseId),
-    pendingAction: Boolean(input.pendingAction),
+    pendingOrder,
+    pendingAction: orderMatchesRound(pendingOrder, input.match.id, input.match.round),
     syncStatus: input.syncStatus ?? "idle",
     chainError: input.chainError,
   };
