@@ -1,0 +1,47 @@
+# Environment & Virtual Environments
+.venv
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+
+# Foundry/Build Artifacts
+cache/
+out/
+build/
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# OS Files
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Solidity Coverage
+coverage/
+coverage.json
+
+# Hardhat (if used)
+hardhat/
+artifacts/
+contracts/artifacts/
+
+# Dependencies
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
